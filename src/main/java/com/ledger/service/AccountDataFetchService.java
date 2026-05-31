@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /** Read-only service for querying account balances and transaction history. */
@@ -58,6 +59,11 @@ public class AccountDataFetchService {
     public List<TransactionResponse> getTransactionHistory(String accountNumber, Instant from, Instant to) {
         if (from.isAfter(to)) {
             throw new IllegalArgumentException("'from' must not be after 'to'");
+        }
+        Instant oldestAllowed = to.minus(365, ChronoUnit.DAYS);
+        if (from.isBefore(oldestAllowed)) {
+            throw new IllegalArgumentException(
+                    "'from' must not be older than 12 months (earliest allowed: " + oldestAllowed + ")");
         }
         accountRepository.findActive(accountNumber).orElseThrow(() -> new AccountNotFoundException(accountNumber));
 

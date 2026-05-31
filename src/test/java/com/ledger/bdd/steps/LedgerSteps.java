@@ -17,6 +17,8 @@ import io.cucumber.java.en.When;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -57,6 +59,9 @@ public class LedgerSteps {
     /** Holds the last exception thrown by a "try to" step so Then can inspect it. */
     private Exception lastException;
 
+    /** Holds the result of the most recent transaction-history query. */
+    private List<com.ledger.dto.TransactionResponse> lastHistory;
+
     /**
      * Wipe the in-memory stores and reset exception state before each scenario.
      * This prevents state leaking between scenarios that share the same account
@@ -67,6 +72,7 @@ public class LedgerSteps {
         accountRepository.clearAll();
         transactionRepository.clearAll();
         lastException = null;
+        lastHistory = null;
     }
 
     // -------------------------------------------------------------------------
@@ -132,6 +138,72 @@ public class LedgerSteps {
     public void theBalanceShouldBe(String accountNumber, BigDecimal expected, String currency) {
         BigDecimal actual = accountDataFetchService.getBalance(accountNumber, null).balance();
         assertThat(actual).isEqualByComparingTo(expected);
+    }
+
+    // -------------------------------------------------------------------------
+    // Timestamped transactions for history / as-of scenarios
+    // -------------------------------------------------------------------------
+
+    @Given("I deposit {bigdecimal} {word} into account {string} at {string}")
+    public void iDepositAt(BigDecimal amount, String currency, String accountNumber, String iso8601) {
+        transactionManagerService.applyTransaction(accountNumber, amount, currency, Instant.parse(iso8601));
+    }
+
+    @Given("I withdraw {bigdecimal} {word} from account {string} at {string}")
+    public void iWithdrawAt(BigDecimal amount, String currency, String accountNumber, String iso8601) {
+        transactionManagerService.applyTransaction(accountNumber, amount.negate(), currency, Instant.parse(iso8601));
+    }
+
+    @When("I request the transaction history of account {string} from {string} to {string}")
+    public void iRequestTransactionHistory(String accountNumber, String fromIso8601, String toIso8601) {
+        lastHistory = accountDataFetchService.getTransactionHistory(
+                accountNumber, Instant.parse(fromIso8601), Instant.parse(toIso8601));
+    }
+
+    @When("I request the transaction history of account {string} from {string}")
+    public void iRequestTransactionHistoryNoTo(String accountNumber, String fromIso8601) {
+        lastHistory = accountDataFetchService.getTransactionHistory(
+                accountNumber, Instant.parse(fromIso8601), Instant.now());
+    }
+
+    @When("I try to request the transaction history of account {string} from {string} to {string}")
+    public void iTryToRequestTransactionHistory(String accountNumber, String fromIso8601, String toIso8601) {
+        try {
+            lastHistory = accountDataFetchService.getTransactionHistory(
+                    accountNumber, Instant.parse(fromIso8601), Instant.parse(toIso8601));
+        } catch (IllegalArgumentException e) {
+            lastException = e;
+        }
+    }
+
+    @Then("the transaction history should contain {int} transaction(s)")
+    public void theHistoryShouldContain(int expectedCount) {
+        assertThat(lastHistory)
+                .as("Expected %d transaction(s) in history but got %d", expectedCount, lastHistory.size())
+                .hasSize(expectedCount);
+    }
+
+    @Then("the transaction history should include a deposit of {bigdecimal} {word}")
+    public void theHistoryShouldIncludeDeposit(BigDecimal amount, String currency) {
+        assertThat(lastHistory)
+                .as("Expected a deposit of %s %s in history", amount, currency)
+                .anyMatch(tx -> tx.amount().compareTo(amount) == 0);
+    }
+
+    @Then("the transaction history should include a withdrawal of {bigdecimal} {word}")
+    public void theHistoryShouldIncludeWithdrawal(BigDecimal amount, String currency) {
+        assertThat(lastHistory)
+                .as("Expected a withdrawal of %s %s in history", amount, currency)
+                .anyMatch(tx -> tx.amount().compareTo(amount.negate()) == 0);
+    }
+
+    @Then("the history request should be rejected with {string}")
+    public void theHistoryRequestShouldBeRejectedWith(String reason) {
+        assertThat(lastException)
+                .as("Expected a rejected history request but no exception was captured")
+                .isNotNull()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(reason);
     }
 
     @Then("the transaction should be rejected with {string}")

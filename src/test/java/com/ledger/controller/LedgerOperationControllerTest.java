@@ -161,7 +161,7 @@ class LedgerOperationControllerTest {
     }
 
     @Test
-    void getHistory_returns200() throws Exception {
+    void getHistory_withExplicitTo_returns200() throws Exception {
         when(accountDataFetchService.getTransactionHistory(any(), any(), any()))
                 .thenReturn(List.of(dummyTx(new BigDecimal("100.00"))));
 
@@ -170,5 +170,42 @@ class LedgerOperationControllerTest {
                         .param("to", "2024-12-31T23:59:59Z"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].amount").value(100.00));
+    }
+
+    @Test
+    void getHistory_omittingTo_defaultsToNow() throws Exception {
+        when(accountDataFetchService.getTransactionHistory(any(), any(), any()))
+                .thenReturn(List.of(dummyTx(new BigDecimal("50.00"))));
+
+        // No 'to' param — controller should supply Instant.now() internally
+        mockMvc.perform(get("/api/transactions/history/ACC001")
+                        .param("from", "2024-06-01T00:00:00Z"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].amount").value(50.00));
+    }
+
+    @Test
+    void getHistory_serviceRejectsFromTooOld_returns400() throws Exception {
+        // The 12-month guard lives in the service; verify the controller maps the
+        // resulting IllegalArgumentException to 400.
+        when(accountDataFetchService.getTransactionHistory(any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("'from' must not be older than 12 months"));
+
+        mockMvc.perform(get("/api/transactions/history/ACC001")
+                        .param("from", "2022-01-01T00:00:00Z")
+                        .param("to", "2024-12-31T23:59:59Z"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void getHistory_fromExactly12MonthsBack_returns200() throws Exception {
+        when(accountDataFetchService.getTransactionHistory(any(), any(), any()))
+                .thenReturn(List.of());
+
+        // 'from' is exactly 365 days before 'to' — should be accepted (boundary inclusive)
+        mockMvc.perform(get("/api/transactions/history/ACC001")
+                        .param("from", "2024-01-01T00:00:00Z")
+                        .param("to", "2024-12-31T00:00:00Z"))
+                .andExpect(status().isOk());
     }
 }

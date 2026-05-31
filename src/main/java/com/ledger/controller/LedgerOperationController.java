@@ -69,12 +69,15 @@ public class LedgerOperationController {
         return ResponseEntity.ok(accountDataFetchService.getBalance(accountNumber, asOf));
     }
 
-    @Operation(summary = "Get transaction history for an account", description = "Returns all transactions whose transactionTimeUtc falls within [from, to].")
+    @Operation(summary = "Get transaction history for an account",
+            description = "Returns transactions whose transactionTimeUtc falls within [from, to]. "
+                    + "'to' defaults to now when omitted. 'from' must not be older than 12 months.")
     @GetMapping(value = "/history/{accountNumber}", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<List<TransactionResponse>> getHistory(
             @Parameter(description = "Account number", required = true) @PathVariable String accountNumber,
-            @Parameter(description = "Range start (ISO-8601 UTC)", required = true) @RequestParam Instant from,
-            @Parameter(description = "Range end (ISO-8601 UTC)", required = true) @RequestParam Instant to) {
-        return ResponseEntity.ok(accountDataFetchService.getTransactionHistory(accountNumber, from, to));
+            @Parameter(description = "Range start (ISO-8601 UTC); must be within the last 12 months", required = true) @RequestParam Instant from,
+            @Parameter(description = "Range end (ISO-8601 UTC); defaults to now when omitted") @RequestParam(required = false) Instant to) {
+        Instant effectiveTo = to != null ? to : Instant.now();
+        return ResponseEntity.ok(accountDataFetchService.getTransactionHistory(accountNumber, from, effectiveTo));
     }
 }

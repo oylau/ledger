@@ -64,10 +64,19 @@ public class TransactionManagerService {
      * @return the recorded transaction response
      */
     public TransactionResponse applyTransaction(String accountNumber, BigDecimal amount, String currency) {
+        return applyTransaction(accountNumber, amount, currency, Instant.now());
+    }
+
+    /**
+     * Apply a transaction at an explicit business timestamp. Useful in tests that
+     * need deterministic transaction times for as-of history queries.
+     */
+    public TransactionResponse applyTransaction(String accountNumber, BigDecimal amount, String currency,
+            Instant transactionTime) {
         ReentrantLock lock = accountLocks.computeIfAbsent(accountNumber, k -> new ReentrantLock());
         lock.lock();
         try {
-            Instant now = Instant.now();
+            Instant now = transactionTime;
             Account account = accountRepository.findActive(accountNumber)
                     .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 

@@ -141,6 +141,24 @@ class TransactionServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void getTransactionHistory_fromOlderThan12Months_throws() {
+        Instant to = Instant.now();
+        Instant from = to.minus(366, java.time.temporal.ChronoUnit.DAYS);
+        assertThatThrownBy(() -> accountDataFetchService.getTransactionHistory("ACC001", from, to))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'from' must not be older than 12 months");
+    }
+
+    @Test
+    void getTransactionHistory_fromExactly365DaysBack_succeeds() {
+        Instant to = Instant.now();
+        Instant from = to.minus(365, java.time.temporal.ChronoUnit.DAYS);
+        // Boundary: exactly 365 days is the allowed limit — should not throw
+        List<TransactionResponse> history = accountDataFetchService.getTransactionHistory("ACC001", from, to);
+        assertThat(history).isEmpty();
+    }
+
     // --- LOAN: happy paths ---
 
     @Test
