@@ -80,7 +80,7 @@ class LedgerOperationControllerTest {
 
     @Test
     void deposit_accountNotFound_returns404() throws Exception {
-        when(transactionManagerService.applyTransaction(any(), any(), any()))
+        when(transactionManagerService.applyTransaction(any(String.class), any(BigDecimal.class), any(String.class)))
                 .thenThrow(new AccountNotFoundException("ACC999"));
 
         mockMvc.perform(post("/api/transactions/deposit")
@@ -92,7 +92,7 @@ class LedgerOperationControllerTest {
 
     @Test
     void deposit_currencyMismatch_returns400() throws Exception {
-        when(transactionManagerService.applyTransaction(any(), any(), any()))
+        when(transactionManagerService.applyTransaction(any(String.class), any(BigDecimal.class), any(String.class)))
                 .thenThrow(new CurrencyMismatchException("USD", "EUR"));
 
         mockMvc.perform(post("/api/transactions/deposit")
@@ -104,7 +104,7 @@ class LedgerOperationControllerTest {
 
     @Test
     void withdraw_insufficientFunds_returns400() throws Exception {
-        when(transactionManagerService.applyTransaction(any(), any(), any()))
+        when(transactionManagerService.applyTransaction(any(String.class), any(BigDecimal.class), any(String.class)))
                 .thenThrow(new InsufficientFundsException("ACC001", new BigDecimal("10"), new BigDecimal("50")));
 
         mockMvc.perform(post("/api/transactions/withdraw")
@@ -116,7 +116,7 @@ class LedgerOperationControllerTest {
 
     @Test
     void withdraw_creditLimitExceeded_returns400() throws Exception {
-        when(transactionManagerService.applyTransaction(any(), any(), any()))
+        when(transactionManagerService.applyTransaction(any(String.class), any(BigDecimal.class), any(String.class)))
                 .thenThrow(new CreditLimitExceededException("LOAN001", new BigDecimal("-1000.00"),
                         new BigDecimal("-800.00"), new BigDecimal("300.00")));
 
@@ -129,7 +129,7 @@ class LedgerOperationControllerTest {
 
     @Test
     void deposit_loanOverpayment_returns400() throws Exception {
-        when(transactionManagerService.applyTransaction(any(), any(), any()))
+        when(transactionManagerService.applyTransaction(any(String.class), any(BigDecimal.class), any(String.class)))
                 .thenThrow(new LoanOverpaymentException("LOAN001", new BigDecimal("-200.00"), new BigDecimal("500.00")));
 
         mockMvc.perform(post("/api/transactions/deposit")

@@ -321,6 +321,98 @@ class TransactionServiceTest {
                 .isGreaterThanOrEqualTo(BigDecimal.ZERO);
     }
 
+    // --- multi-operation transactions: commit ---
+
+    @Test
+    void multiOp_allDeposits_allCommitted() {
+        List<TransactionResponse> responses = transactionManagerService.applyTransaction(
+                "ACC001", List.of(new BigDecimal("100.00"), new BigDecimal("50.00")), "USD");
+
+        assertThat(responses).hasSize(2);
+        assertThat(accountDataFetchService.getBalance("ACC001", null).balance()).isEqualByComparingTo("150.00");
+    }
+
+    @Test
+    void multiOp_mixedOps_netPositive_allCommitted() {
+        transactionManagerService.applyTransaction("ACC001", new BigDecimal("200.00"), "USD");
+
+        List<TransactionResponse> responses = transactionManagerService.applyTransaction(
+                "ACC001", List.of(new BigDecimal("100.00"), new BigDecimal("-50.00")), "USD");
+
+        assertThat(responses).hasSize(2);
+        assertThat(accountDataFetchService.getBalance("ACC001", null).balance()).isEqualByComparingTo("250.00");
+    }
+
+    @Test
+    void multiOp_netToExactlyZero_current_commits() {
+        transactionManagerService.applyTransaction("ACC001", new BigDecimal("100.00"), "USD");
+
+        transactionManagerService.applyTransaction(
+                "ACC001", List.of(new BigDecimal("50.00"), new BigDecimal("-150.00")), "USD");
+
+        assertThat(accountDataFetchService.getBalance("ACC001", null).balance()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void multiOp_loan_netWithinLimit_commits() {
+        accountRepository.createAccount("LOAN001", "GBP", AccountType.LOAN, LOAN_LIMIT);
+
+        transactionManagerService.applyTransaction(
+                "LOAN001", List.of(new BigDecimal("-600.00"), new BigDecimal("100.00")), "GBP");
+
+        assertThat(accountDataFetchService.getBalance("LOAN001", null).balance()).isEqualByComparingTo("-500.00");
+    }
+
+    // --- multi-operation transactions: rollback ---
+
+    @Test
+    void multiOp_netBelowZero_current_nothingCommitted() {
+        transactionManagerService.applyTransaction("ACC001", new BigDecimal("100.00"), "USD");
+
+        assertThatThrownBy(() -> transactionManagerService.applyTransaction(
+                "ACC001", List.of(new BigDecimal("50.00"), new BigDecimal("-200.00")), "USD"))
+                .isInstanceOf(InsufficientFundsException.class);
+
+        // Balance unchanged — neither operation was persisted.
+        assertThat(accountDataFetchService.getBalance("ACC001", null).balance()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    void multiOp_individualOpOk_butNetBelowZero_nothingCommitted() {
+        // Each individual amount is <= current balance, but together they overdraft.
+        transactionManagerService.applyTransaction("ACC001", new BigDecimal("50.00"), "USD");
+
+        assertThatThrownBy(() -> transactionManagerService.applyTransaction(
+                "ACC001", List.of(new BigDecimal("-30.00"), new BigDecimal("-30.00")), "USD"))
+                .isInstanceOf(InsufficientFundsException.class);
+
+        assertThat(accountDataFetchService.getBalance("ACC001", null).balance()).isEqualByComparingTo("50.00");
+    }
+
+    @Test
+    void multiOp_loan_netExceedsCreditLimit_nothingCommitted() {
+        accountRepository.createAccount("LOAN001", "GBP", AccountType.LOAN, LOAN_LIMIT);
+        transactionManagerService.applyTransaction("LOAN001", new BigDecimal("-800.00"), "GBP");
+
+        assertThatThrownBy(() -> transactionManagerService.applyTransaction(
+                "LOAN001", List.of(new BigDecimal("-100.00"), new BigDecimal("-200.00")), "GBP"))
+                .isInstanceOf(CreditLimitExceededException.class);
+
+        assertThat(accountDataFetchService.getBalance("LOAN001", null).balance()).isEqualByComparingTo("-800.00");
+    }
+
+    @Test
+    void multiOp_loan_netOverpayment_nothingCommitted() {
+        accountRepository.createAccount("LOAN001", "GBP", AccountType.LOAN, LOAN_LIMIT);
+        transactionManagerService.applyTransaction("LOAN001", new BigDecimal("-300.00"), "GBP");
+
+        assertThatThrownBy(() -> transactionManagerService.applyTransaction(
+                "LOAN001", List.of(new BigDecimal("200.00"), new BigDecimal("200.00")), "GBP"))
+                .isInstanceOf(LoanOverpaymentException.class);
+
+        assertThat(accountDataFetchService.getBalance("LOAN001", null).balance()).isEqualByComparingTo("-300.00");
+    }
+
     @Test
     void loan_concurrentWithdrawals_neverBreachCreditLimit() throws InterruptedException {
         accountRepository.createAccount("LOAN001", "GBP", AccountType.LOAN, LOAN_LIMIT);

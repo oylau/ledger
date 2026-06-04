@@ -15,6 +15,8 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -48,7 +50,7 @@ public class TransactionManagerService {
     }
 
     /**
-     * Apply a transaction (deposit or withdrawal) to an account.
+     * Apply a single-operation transaction (deposit or withdrawal) to an account.
      *
      * <p>Balance rules by account type:
      * <ul>
@@ -64,14 +66,37 @@ public class TransactionManagerService {
      * @return the recorded transaction response
      */
     public TransactionResponse applyTransaction(String accountNumber, BigDecimal amount, String currency) {
-        return applyTransaction(accountNumber, amount, currency, Instant.now());
+        return applyTransaction(accountNumber, List.of(amount), currency, Instant.now()).getFirst();
     }
 
     /**
-     * Apply a transaction at an explicit business timestamp. Useful in tests that
+     * Apply a single-operation transaction at an explicit business timestamp. Useful in tests that
      * need deterministic transaction times for as-of history queries.
      */
     public TransactionResponse applyTransaction(String accountNumber, BigDecimal amount, String currency,
+            Instant transactionTime) {
+        return applyTransaction(accountNumber, List.of(amount), currency, transactionTime).getFirst();
+    }
+
+    /**
+     * Apply a multi-operation transaction atomically. All operations are recorded only if the
+     * resulting balance satisfies the account type constraints. The constraint is evaluated on the
+     * final net balance — intermediate states during the transaction are not checked.
+     *
+     * @param accountNumber the account number
+     * @param amounts list of amounts to apply (positive = deposit, negative = withdrawal)
+     * @param currency ISO 4217 currency code
+     * @return the recorded transaction responses, one per operation, in input order
+     */
+    public List<TransactionResponse> applyTransaction(String accountNumber, List<BigDecimal> amounts, String currency) {
+        return applyTransaction(accountNumber, amounts, currency, Instant.now());
+    }
+
+    /**
+     * Apply a multi-operation transaction at an explicit business timestamp. Useful in tests that
+     * need deterministic transaction times for as-of history queries.
+     */
+    public List<TransactionResponse> applyTransaction(String accountNumber, List<BigDecimal> amounts, String currency,
             Instant transactionTime) {
         ReentrantLock lock = accountLocks.computeIfAbsent(accountNumber, k -> new ReentrantLock());
         lock.lock();
@@ -85,25 +110,31 @@ public class TransactionManagerService {
             }
 
             BigDecimal currentBalance = transactionRepository.sumBalanceAsOf(accountNumber, now);
-            BigDecimal newBalance = currentBalance.add(amount);
+            BigDecimal netDelta = amounts.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal newBalance = currentBalance.add(netDelta);
 
             if (account.accountType() == AccountType.CURRENT) {
                 if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
-                    throw new InsufficientFundsException(accountNumber, currentBalance, amount.negate());
+                    // Use netDelta for the error: withdrawal is the net negative effect
+                    throw new InsufficientFundsException(accountNumber, currentBalance, netDelta.negate());
                 }
             } else if (account.accountType() == AccountType.LOAN) {
                 if (newBalance.compareTo(account.lowerBound()) < 0) {
                     throw new CreditLimitExceededException(accountNumber, account.lowerBound(), currentBalance,
-                            amount.negate());
+                            netDelta.negate());
                 }
                 if (newBalance.compareTo(BigDecimal.ZERO) > 0) {
-                    throw new LoanOverpaymentException(accountNumber, currentBalance, amount);
+                    throw new LoanOverpaymentException(accountNumber, currentBalance, netDelta);
                 }
             }
 
-            Transaction tx = Transaction.create(accountNumber, amount, now, now, Instant.MAX);
-            transactionRepository.save(tx);
-            return toResponse(tx);
+            List<TransactionResponse> responses = new ArrayList<>(amounts.size());
+            for (BigDecimal amount : amounts) {
+                Transaction tx = Transaction.create(accountNumber, amount, now, now, Instant.MAX);
+                transactionRepository.save(tx);
+                responses.add(toResponse(tx));
+            }
+            return responses;
         } finally {
             lock.unlock();
         }

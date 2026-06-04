@@ -31,4 +31,5 @@ public class AccountManagerService {
         BigDecimal effectiveLowerBound = lowerBound != null ? lowerBound : BigDecimal.ZERO;
         return accountRepository.createAccount(accountNumber, currency, accountType, effectiveLowerBound);
     }
+
 }
